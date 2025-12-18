@@ -1,0 +1,41 @@
+# OpenWrt Build Files
+openwrt/
+output/
+build.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-*
+
+# Backup files
+*.bak
+*.orig
+*.backup
+
+# Temporary files
+*.tmp
+*.temp
+
+# Logs
+*.log
+
+# Archives
+*.tar.gz
+*.zip
+*.7z
+
+# Firmware files
+*.bin
+*.img
+*.ubi
+*.itb

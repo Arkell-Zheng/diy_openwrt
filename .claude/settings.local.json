@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod:*)",
+      "Bash(bash -n:*)",
+      "Bash(./scripts/test-simulation.sh)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
