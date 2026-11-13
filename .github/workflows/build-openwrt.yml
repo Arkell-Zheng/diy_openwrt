@@ -1,3 +1,126 @@
+name: Build OpenWrt for Redmi AC2100
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  REPO_URL: https://github.com/coolsnowwolf/lede
+  REPO_BRANCH: master
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Init environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/share/boost
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install -y build-essential clang flex bison gawk gcc-multilib g++-multilib gettext git libncurses5-dev libncursesw5-dev libssl-dev libelf-dev zlib1g-dev python3 python3-pip python3-setuptools rsync unzip file wget curl ccache cmake ninja-build zstd squashfs-tools
+          sudo timedatectl set-timezone $TZ
+          sudo mkdir -p /workdir
+          sudo chown $USER:$GROUPS /workdir
+          df -hT
+
+      - name: Clone LEDE source
+        working-directory: /workdir
+        run: |
+          git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+      - name: Load custom feeds
+        run: |
+          cp config/feeds.conf openwrt/feeds.conf.default
+          chmod +x scripts/diy-part1.sh scripts/diy-part2.sh
+          cd openwrt
+          $GITHUB_WORKSPACE/scripts/diy-part1.sh
+
+      - name: Update and install feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Apply custom config
+        run: |
+          if [ -d files ]; then mv files openwrt/files; fi
+          cp config/redmi-ac2100.config openwrt/.config
+          cd openwrt
+          $GITHUB_WORKSPACE/scripts/diy-part2.sh
+          make defconfig
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config || { echo ERROR: no target device selected; exit 1; }
+
+      - name: Download packages
+        run: |
+          cd openwrt
+          make download -j8
+          find dl -size -1024c -delete
+
+      - name: Compile firmware
+        id: compile
+        run: |
+          cd openwrt
+          set -o pipefail
+          make -j$(nproc) V=s 2>&1 | tee build.log || make -j1 V=s 2>&1 | tee -a build.log
+          make target/linux/install V=s 2>&1 | tee -a build.log || true
+          echo FILE_DATE=$(date +%Y%m%d%H%M) >> $GITHUB_ENV
+          find bin/targets -type f -name '*.bin' -exec ls -lh {} + || true
+          if find bin/targets -type f -name '*sysupgrade.bin' -print -quit | grep -q .; then
+            echo status=success >> $GITHUB_OUTPUT
+          else
+            echo ERROR: no sysupgrade firmware generated
+            exit 1
+          fi
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: openwrt/build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Collect firmware
+        id: organize
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/firmware
+          for f in $(find openwrt/bin/targets -type f -name '*.bin'); do cp $f $GITHUB_WORKSPACE/firmware/; done
+          ls -lh $GITHUB_WORKSPACE/firmware
+          ls -A $GITHUB_WORKSPACE/firmware | grep -q . || { echo ERROR: firmware directory empty; exit 1; }
+
+      - name: Upload firmware artifact
+        if: steps.compile.outputs.status == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt_AC2100_${{ env.FILE_DATE }}
+          path: firmware/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish release
+        if: steps.compile.outputs.status == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ac2100-${{ env.FILE_DATE }}
+          name: Redmi AC2100 OpenWrt ${{ env.FILE_DATE }}
+          body: |
+            Target: ramips/mt7621 / xiaomi_redmi-router-ac2100
+            Default LAN 192.168.31.1, user root, no password.
+            WiFi: RedmiAC2100_2.4G / RedmiAC2100_5G, key 12345678.
+            sysupgrade.bin for upgrade, factory.bin for stock firmware.
+            WARNING: flashing may brick the device, back up first.
+          files: firmware/*
 #===============================================================================
 # OpenWrt 自动编译工作流
 # 设备目标: 红米AC2100 (xiaomi_redmi-router-ac2100)
